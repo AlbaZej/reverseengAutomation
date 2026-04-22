@@ -1,0 +1,26 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+      - db:/app/data
+    environment:
+      - VT_API_KEY=${VT_API_KEY:-}
+      - GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR:-}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  uploads:
+  db:
