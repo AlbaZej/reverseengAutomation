@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.auth import get_current_user
+from api.auth import get_optional_user
 from api.database.engine import get_db
 from api.database.orm_models import AnalysisJob
 
@@ -35,7 +35,7 @@ def ai_status():
 @router.post("/ai/explain")
 def explain_analysis(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     """Get an AI explanation of analysis results."""
@@ -49,7 +49,7 @@ def explain_analysis(
 @router.post("/ai/ask")
 def ask_about_binary(
     req: AskRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     """Ask a question about an analyzed binary."""
@@ -63,7 +63,7 @@ def ask_about_binary(
 @router.post("/ai/explain-function")
 def explain_function(
     req: ExplainFunctionRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = Depends(get_optional_user),
 ):
     """Explain a decompiled function."""
     from core.ai.interpreter import explain_function
@@ -75,7 +75,7 @@ def explain_function(
 @router.post("/ai/generate-yara")
 def generate_yara(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     """Generate a YARA rule from analysis results."""

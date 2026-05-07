@@ -53,9 +53,17 @@ export function AiPanel({ jobId }: { jobId: string }) {
     setLoading("explain");
     try {
       const result = await aiExplain(jobId);
-      setExplanation(result);
+      // Surface the error field if the backend returned one
+      if (result.error) {
+        setExplanation({
+          summary: `AI request failed: ${result.error}`,
+        });
+      } else {
+        setExplanation(result);
+      }
     } catch (e) {
-      setExplanation({ summary: "Failed to get AI explanation" });
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      setExplanation({ summary: `Request failed: ${msg}. Open the browser DevTools → Network tab to see the response.` });
     } finally {
       setLoading("");
     }

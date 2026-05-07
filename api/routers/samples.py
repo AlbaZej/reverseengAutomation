@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from api.auth import get_current_user
+from api.auth import get_current_user, get_optional_user
 from api.database.engine import get_db
 from api.database.orm_models import AnalysisJob, Annotation, Upload
 
