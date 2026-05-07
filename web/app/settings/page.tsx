@@ -123,27 +123,36 @@ export default function SettingsPage() {
           />
           <span className="text-sm">
             {aiAvailable
-              ? "AI features enabled (GEMINI_API_KEY configured)"
-              : "AI features disabled — set GEMINI_API_KEY on the server"}
+              ? "AI features enabled (Ollama running locally)"
+              : "AI features disabled — Ollama not running"}
           </span>
         </div>
         <p className="text-sm text-[var(--text-secondary)] mt-3">
-          When enabled, AI can explain analysis results, suggest function names,
-          generate YARA rules, and answer questions about samples.
+          AI runs locally via Ollama — your samples never leave your machine.
+          Use it to explain results, suggest function names, generate YARA rules,
+          and ask questions about samples.
         </p>
         {!aiAvailable && (
-          <p className="text-sm text-[var(--text-secondary)] mt-2">
-            Get a free Gemini API key at{" "}
-            <a
-              href="https://aistudio.google.com/apikey"
-              target="_blank"
-              rel="noopener"
-              className="text-[var(--accent-blue)] hover:underline"
-            >
-              aistudio.google.com/apikey
-            </a>{" "}
-            — 1500 requests/day free.
-          </p>
+          <div className="mt-3 p-3 bg-[var(--bg-secondary)] rounded-lg text-sm text-[var(--text-secondary)]">
+            <p className="font-semibold mb-1">Setup:</p>
+            <ol className="space-y-1 list-decimal list-inside">
+              <li>
+                Install Ollama:{" "}
+                <a
+                  href="https://ollama.com/download"
+                  target="_blank"
+                  rel="noopener"
+                  className="text-[var(--accent-blue)] hover:underline"
+                >
+                  ollama.com/download
+                </a>
+              </li>
+              <li>
+                Run: <code className="text-[var(--accent-blue)]">ollama pull llama3.1:8b</code>
+              </li>
+              <li>Ollama runs automatically on port 11434</li>
+            </ol>
+          </div>
         )}
       </div>
     </div>

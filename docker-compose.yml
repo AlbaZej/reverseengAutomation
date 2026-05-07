@@ -9,8 +9,11 @@ services:
     environment:
       - VT_API_KEY=${VT_API_KEY:-}
       - GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
       - DESHIFRO_SECRET_KEY=${DESHIFRO_SECRET_KEY:-dev-secret-change-in-production}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   web:

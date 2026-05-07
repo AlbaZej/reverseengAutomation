@@ -26,21 +26,25 @@ export function AiPanel({ jobId }: { jobId: string }) {
           <Cpu size={20} className="text-[var(--text-secondary)]" /> AI Analysis
         </h2>
         <p className="text-sm text-[var(--text-secondary)]">
-          Set <code className="text-[var(--accent-blue)]">GEMINI_API_KEY</code> on the server to enable
-          AI-powered explanations, Q&A, and YARA rule generation.
+          Ollama is not running. AI features run locally — your data never leaves your machine.
         </p>
-        <p className="text-xs text-[var(--text-secondary)] mt-2">
-          Get a free key at{" "}
-          <a
-            href="https://aistudio.google.com/apikey"
-            target="_blank"
-            rel="noopener"
-            className="text-[var(--accent-blue)] hover:underline"
-          >
-            aistudio.google.com/apikey
-          </a>{" "}
-          — 1500 requests/day free.
-        </p>
+        <ol className="text-xs text-[var(--text-secondary)] mt-3 space-y-1 list-decimal list-inside">
+          <li>
+            Install Ollama:{" "}
+            <a
+              href="https://ollama.com/download"
+              target="_blank"
+              rel="noopener"
+              className="text-[var(--accent-blue)] hover:underline"
+            >
+              ollama.com/download
+            </a>
+          </li>
+          <li>
+            Pull a model: <code className="text-[var(--accent-blue)]">ollama pull llama3.1:8b</code>
+          </li>
+          <li>Ollama runs automatically — refresh this page</li>
+        </ol>
       </div>
     );
   }

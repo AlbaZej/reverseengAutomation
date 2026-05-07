@@ -1,46 +1,71 @@
-"""AI interpretation layer — uses Google Gemini (free tier) to explain analysis results.
+"""AI interpretation layer — uses Ollama (local LLM) to explain analysis results.
 
-Get a free API key at: https://aistudio.google.com/apikey
+Ollama runs a local LLM server. Install at: https://ollama.com/download
 
-Set GEMINI_API_KEY environment variable to enable.
+After installing, pull a model:
+    ollama pull llama3.1:8b      # 4.7GB, good quality
+    ollama pull llama3.2:3b      # 2GB, fast
+    ollama pull qwen2.5:7b       # 4.4GB, strong reasoning
+
+Configure via environment variables:
+    OLLAMA_HOST     - Ollama server URL (default: http://localhost:11434)
+    OLLAMA_MODEL    - Model to use (default: llama3.1:8b)
+
+Why local? Malware samples never leave your machine. Zero API costs.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import urllib.request
 import urllib.error
+import urllib.request
 
 from core.models import AnalysisReport
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 
 
 def is_ai_available() -> bool:
-    """Check if the Gemini API key is configured."""
-    return bool(os.environ.get("GEMINI_API_KEY"))
+    """Check if Ollama is running and reachable."""
+    try:
+        req = urllib.request.Request(f"{OLLAMA_HOST}/api/tags")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
 
 
-def _call_gemini(system_prompt: str, user_prompt: str, max_tokens: int = 2048) -> str:
-    """Call the Gemini API and return the text response."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set")
+def get_available_models() -> list[str]:
+    """List models available on the local Ollama instance."""
+    try:
+        req = urllib.request.Request(f"{OLLAMA_HOST}/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return []
 
-    url = f"{GEMINI_API_BASE}/models/{GEMINI_MODEL}:generateContent?key={api_key}"
+
+def _call_ollama(system_prompt: str, user_prompt: str, max_tokens: int = 2048) -> str:
+    """Call the local Ollama API and return the text response."""
+    url = f"{OLLAMA_HOST}/api/chat"
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
 
     body = {
-        "system_instruction": {"parts": [{"text": system_prompt}]} if system_prompt else None,
-        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "num_predict": max_tokens,
             "temperature": 0.3,
         },
     }
-    # Remove None values
-    body = {k: v for k, v in body.items() if v is not None}
 
     req = urllib.request.Request(
         url,
@@ -50,19 +75,18 @@ def _call_gemini(system_prompt: str, user_prompt: str, max_tokens: int = 2048) -
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         error_body = e.read().decode()
-        raise RuntimeError(f"Gemini API error {e.code}: {error_body}")
+        raise RuntimeError(f"Ollama API error {e.code}: {error_body}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"Cannot reach Ollama at {OLLAMA_HOST}. "
+            f"Is Ollama running? Install at https://ollama.com/download. Error: {e}"
+        )
 
-    candidates = data.get("candidates", [])
-    if not candidates:
-        block_reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
-        raise RuntimeError(f"No response from Gemini (blocked: {block_reason})")
-
-    parts = candidates[0].get("content", {}).get("parts", [])
-    return "".join(p.get("text", "") for p in parts)
+    return data.get("message", {}).get("content", "")
 
 
 def explain_report(report: AnalysisReport) -> dict:
@@ -74,7 +98,10 @@ def explain_report(report: AnalysisReport) -> dict:
             "function_names": {},
             "next_steps": [],
             "yara_suggestion": None,
-            "message": "Set GEMINI_API_KEY to enable AI analysis (free at aistudio.google.com/apikey)",
+            "message": (
+                f"Ollama not running. Install from https://ollama.com/download, "
+                f"then run: ollama pull {OLLAMA_MODEL}"
+            ),
         }
 
     context = _build_context(report)
@@ -97,14 +124,8 @@ Respond with ONLY valid JSON in this exact format:
 }}"""
 
     try:
-        text = _call_gemini(system, user, max_tokens=2048)
-        # Strip markdown fences if present
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-        text = text.strip()
+        text = _call_ollama(system, user, max_tokens=2048)
+        text = _strip_markdown_fences(text)
 
         result = json.loads(text)
         result["ai_available"] = True
@@ -141,7 +162,7 @@ def explain_function(code: str, context: str = "") -> dict:
     )
 
     try:
-        text = _call_gemini("", user, max_tokens=1024)
+        text = _call_ollama("", user, max_tokens=1024)
         return {"ai_available": True, "explanation": text}
     except Exception as e:
         return {"ai_available": True, "explanation": None, "error": str(e)}
@@ -160,7 +181,7 @@ def ask_about_binary(report: AnalysisReport, question: str) -> dict:
     user = f"Analysis data:\n{context}\n\nQuestion: {question}"
 
     try:
-        text = _call_gemini(system, user, max_tokens=2048)
+        text = _call_ollama(system, user, max_tokens=2048)
         return {"ai_available": True, "answer": text}
     except Exception as e:
         return {"ai_available": True, "answer": None, "error": str(e)}
@@ -180,16 +201,20 @@ def generate_yara_rule(report: AnalysisReport) -> dict:
     )
 
     try:
-        text = _call_gemini("", user, max_tokens=2048)
-        # Strip markdown fences
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-        return {"ai_available": True, "rule": text.strip()}
+        text = _call_ollama("", user, max_tokens=2048)
+        return {"ai_available": True, "rule": _strip_markdown_fences(text)}
     except Exception as e:
         return {"ai_available": True, "rule": None, "error": str(e)}
+
+
+def _strip_markdown_fences(text: str) -> str:
+    """Remove ```...``` fences from LLM output."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
 
 
 def _build_context(report: AnalysisReport) -> str:
