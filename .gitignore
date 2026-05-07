@@ -47,3 +47,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Local tool downloads (radare2, etc.)
+.tools/
