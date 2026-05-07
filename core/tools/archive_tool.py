@@ -137,26 +137,63 @@ class ArchiveTool(BaseTool):
         raise ValueError(f"Unsupported archive format: {fmt}")
 
     def _extract_zip(self, archive: Path, dest: Path) -> dict:
-        # Try without password first
-        with zipfile.ZipFile(archive) as zf:
-            try:
+        """Extract a ZIP, handling AES-encrypted variants used by MalwareBazaar et al.
+
+        Strategy:
+        1. Try stdlib zipfile (fast, handles unencrypted + ZipCrypto)
+        2. If that fails, try pyzipper (handles AES-encrypted ZIPs)
+        3. If that fails, try 7z CLI (handles everything but is slowest)
+        """
+        # Step 1: stdlib unencrypted
+        try:
+            with zipfile.ZipFile(archive) as zf:
                 zf.extractall(dest)
-                return {"password": None}
-            except RuntimeError:
-                # Encrypted — try common malware passwords
-                for pw in MALWARE_PASSWORDS:
-                    try:
-                        zf.extractall(dest, pwd=pw.encode())
-                        return {"password": pw}
-                    except (RuntimeError, zipfile.BadZipFile):
-                        # Reset destination since partial extraction may have happened
-                        for f in dest.iterdir():
-                            if f.is_file():
-                                f.unlink()
-                            elif f.is_dir():
-                                shutil.rmtree(f)
-                        continue
-                raise RuntimeError(f"ZIP is encrypted; tried passwords: {MALWARE_PASSWORDS}")
+                return {"password": None, "extractor": "zipfile"}
+        except (RuntimeError, NotImplementedError):
+            pass  # encrypted — fall through
+
+        # Step 2: pyzipper (supports AES — what MalwareBazaar uses)
+        try:
+            import pyzipper
+            for pw in [None, *MALWARE_PASSWORDS]:
+                self._clear_dir(dest)
+                try:
+                    with pyzipper.AESZipFile(archive) as zf:
+                        if pw:
+                            zf.setpassword(pw.encode())
+                        zf.extractall(dest)
+                    return {"password": pw, "extractor": "pyzipper"}
+                except (RuntimeError, pyzipper.zipfile_aes.BadZipFile):
+                    continue
+                except Exception:
+                    continue
+        except ImportError:
+            pass
+
+        # Step 3: 7z CLI (last resort, handles everything)
+        if shutil.which("7z"):
+            for pw in [None, *MALWARE_PASSWORDS]:
+                self._clear_dir(dest)
+                cmd = ["7z", "x", "-y", f"-o{dest}", str(archive)]
+                if pw:
+                    cmd.append(f"-p{pw}")
+                _, _, rc = self._exec(cmd, timeout=120)
+                if rc == 0:
+                    return {"password": pw, "extractor": "7z"}
+
+        raise RuntimeError(
+            f"ZIP extraction failed. Tried stdlib, pyzipper, and 7z with passwords: "
+            f"{MALWARE_PASSWORDS}. The file may use an unsupported encryption "
+            f"algorithm or the password is not in our list."
+        )
+
+    def _clear_dir(self, path: Path):
+        """Empty a directory between extraction attempts."""
+        for f in path.iterdir() if path.exists() else []:
+            if f.is_file():
+                f.unlink()
+            elif f.is_dir():
+                shutil.rmtree(f)
 
     def _extract_tar(self, archive: Path, dest: Path) -> dict:
         with tarfile.open(archive, "r:*") as tf:

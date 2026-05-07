@@ -24,9 +24,11 @@ X86_PATTERNS = {
         SignalType.MEDIUM,
     ),
     "getpc_call_pop": (
-        re.compile(rb"\xe8[\x00-\xff][\x00-\xff][\x00-\xff][\x00-\xff][\x58-\x5f]", re.DOTALL),
-        "CALL/POP GetPC technique — typical shellcode self-relocation",
-        SignalType.HIGH,
+        # Specifically: CALL +5 (E8 00 00 00 00) POP reg — exact short-skip variant
+        # The general pattern is too noisy (modern compilers emit it for ASLR)
+        re.compile(rb"\xe8\x00\x00\x00\x00[\x58-\x5f]"),
+        "CALL/POP GetPC technique — possible shellcode self-relocation",
+        SignalType.LOW,  # downgraded — too common in normal compiled code
     ),
     "fnstenv_getpc": (
         re.compile(rb"\xd9[\xee\xd0]\xd9\x74\x24\xf4"),
@@ -127,8 +129,10 @@ class ShellcodeTool(BaseTool):
                     "first_offsets": offsets[:5],
                 })
 
-                # Generate finding for medium+ severity
-                if severity in (SignalType.MEDIUM, SignalType.HIGH, SignalType.CRITICAL):
+                # Only generate findings for high-severity patterns; low/info ones
+                # are reported in match data but don't pollute the findings list
+                # (avoid flooding reports with false positives from compiled code)
+                if severity in (SignalType.HIGH, SignalType.CRITICAL):
                     findings.append(Finding(
                         title=f"x86 pattern: {pattern_name}",
                         description=f"{description} (found {len(offsets)}x at offsets {[hex(o) for o in offsets[:3]]})",

@@ -108,19 +108,26 @@ def explain_report(report: AnalysisReport) -> dict:
 
     system = (
         "You are a senior malware analyst. Given automated analysis results, "
-        "provide concise, actionable interpretation. Be direct — the user is technical. "
-        "Always respond with valid JSON only, no markdown fences."
+        "provide concise, evidence-based interpretation. CRITICAL RULES:\n"
+        "- Only describe behaviors that are SUPPORTED by the evidence below\n"
+        "- DO NOT invent findings that aren't in the data\n"
+        "- If the verdict is 'clean' and there are few/no high-severity findings, "
+        "say the binary appears benign\n"
+        "- Common Windows APIs (CreateFile, RegSetValueEx, IsDebuggerPresent) "
+        "are used by ALL apps — don't call this 'malicious' just because they're present\n"
+        "- The verdict and confidence in the data is authoritative; align your summary with it\n"
+        "- Respond with valid JSON only, no markdown fences."
     )
-    user = f"""Analysis results:
+    user = f"""Analysis results (this is ground truth — base your summary ONLY on this data):
 
 {context}
 
-Respond with ONLY valid JSON in this exact format:
+Respond with ONLY valid JSON:
 {{
-    "summary": "2-3 sentence plain English explanation of what this binary does and whether it's malicious",
+    "summary": "2-3 sentence summary that ALIGNS with the verdict above. If verdict is 'clean', say it appears benign and explain why. If 'malicious'/'suspicious', explain what specific findings indicate that.",
     "function_names": {{}},
-    "next_steps": ["step 1", "step 2"],
-    "yara_suggestion": "A YARA rule to detect similar samples, or null if not enough info"
+    "next_steps": ["specific actionable steps based on the actual findings"],
+    "yara_suggestion": "A YARA rule based on UNIQUE strings/patterns from the data, or null if the binary appears benign"
 }}"""
 
     try:
