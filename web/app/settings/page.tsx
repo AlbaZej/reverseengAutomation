@@ -123,14 +123,28 @@ export default function SettingsPage() {
           />
           <span className="text-sm">
             {aiAvailable
-              ? "AI features enabled (ANTHROPIC_API_KEY configured)"
-              : "AI features disabled — set ANTHROPIC_API_KEY on the server"}
+              ? "AI features enabled (GEMINI_API_KEY configured)"
+              : "AI features disabled — set GEMINI_API_KEY on the server"}
           </span>
         </div>
         <p className="text-sm text-[var(--text-secondary)] mt-3">
           When enabled, AI can explain analysis results, suggest function names,
           generate YARA rules, and answer questions about samples.
         </p>
+        {!aiAvailable && (
+          <p className="text-sm text-[var(--text-secondary)] mt-2">
+            Get a free Gemini API key at{" "}
+            <a
+              href="https://aistudio.google.com/apikey"
+              target="_blank"
+              rel="noopener"
+              className="text-[var(--accent-blue)] hover:underline"
+            >
+              aistudio.google.com/apikey
+            </a>{" "}
+            — 1500 requests/day free.
+          </p>
+        )}
       </div>
     </div>
   );

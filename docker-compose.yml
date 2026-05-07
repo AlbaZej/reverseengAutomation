@@ -9,6 +9,8 @@ services:
     environment:
       - VT_API_KEY=${VT_API_KEY:-}
       - GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - DESHIFRO_SECRET_KEY=${DESHIFRO_SECRET_KEY:-dev-secret-change-in-production}
     restart: unless-stopped
 
   web:

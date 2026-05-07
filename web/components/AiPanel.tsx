@@ -26,8 +26,20 @@ export function AiPanel({ jobId }: { jobId: string }) {
           <Cpu size={20} className="text-[var(--text-secondary)]" /> AI Analysis
         </h2>
         <p className="text-sm text-[var(--text-secondary)]">
-          Set <code className="text-[var(--accent-blue)]">ANTHROPIC_API_KEY</code> on the server to enable
+          Set <code className="text-[var(--accent-blue)]">GEMINI_API_KEY</code> on the server to enable
           AI-powered explanations, Q&A, and YARA rule generation.
+        </p>
+        <p className="text-xs text-[var(--text-secondary)] mt-2">
+          Get a free key at{" "}
+          <a
+            href="https://aistudio.google.com/apikey"
+            target="_blank"
+            rel="noopener"
+            className="text-[var(--accent-blue)] hover:underline"
+          >
+            aistudio.google.com/apikey
+          </a>{" "}
+          — 1500 requests/day free.
         </p>
       </div>
     );

@@ -1,36 +1,72 @@
-"""AI interpretation layer — uses Claude API to explain analysis results.
+"""AI interpretation layer — uses Google Gemini (free tier) to explain analysis results.
 
-This module is designed to work when an API key is available and gracefully
-degrade when it's not. All functions return a result dict that includes
-an "ai_available" flag.
+Get a free API key at: https://aistudio.google.com/apikey
 
-Set ANTHROPIC_API_KEY environment variable to enable.
+Set GEMINI_API_KEY environment variable to enable.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+import urllib.request
+import urllib.error
 
 from core.models import AnalysisReport
 
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
 
 def is_ai_available() -> bool:
-    """Check if the AI API key is configured."""
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    """Check if the Gemini API key is configured."""
+    return bool(os.environ.get("GEMINI_API_KEY"))
+
+
+def _call_gemini(system_prompt: str, user_prompt: str, max_tokens: int = 2048) -> str:
+    """Call the Gemini API and return the text response."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    url = f"{GEMINI_API_BASE}/models/{GEMINI_MODEL}:generateContent?key={api_key}"
+
+    body = {
+        "system_instruction": {"parts": [{"text": system_prompt}]} if system_prompt else None,
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "temperature": 0.3,
+        },
+    }
+    # Remove None values
+    body = {k: v for k, v in body.items() if v is not None}
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        raise RuntimeError(f"Gemini API error {e.code}: {error_body}")
+
+    candidates = data.get("candidates", [])
+    if not candidates:
+        block_reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
+        raise RuntimeError(f"No response from Gemini (blocked: {block_reason})")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts)
 
 
 def explain_report(report: AnalysisReport) -> dict:
-    """Generate an AI explanation of the analysis report.
-
-    Returns a dict with:
-        - ai_available: bool
-        - summary: str (plain English explanation)
-        - function_names: dict (address -> suggested name)
-        - next_steps: list[str]
-        - yara_suggestion: str (suggested YARA rule)
-    """
+    """Generate an AI explanation of the analysis report."""
     if not is_ai_available():
         return {
             "ai_available": False,
@@ -38,54 +74,54 @@ def explain_report(report: AnalysisReport) -> dict:
             "function_names": {},
             "next_steps": [],
             "yara_suggestion": None,
-            "message": "Set ANTHROPIC_API_KEY to enable AI analysis",
+            "message": "Set GEMINI_API_KEY to enable AI analysis (free at aistudio.google.com/apikey)",
         }
 
-    from anthropic import Anthropic
-
-    client = Anthropic()
-
-    # Build context from the report
     context = _build_context(report)
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        system=(
-            "You are a senior malware analyst. Given the automated analysis results below, "
-            "provide a concise, actionable interpretation. Be direct — the user is technical."
-        ),
-        messages=[
-            {
-                "role": "user",
-                "content": f"""Here are the automated analysis results for a binary:
+    system = (
+        "You are a senior malware analyst. Given automated analysis results, "
+        "provide concise, actionable interpretation. Be direct — the user is technical. "
+        "Always respond with valid JSON only, no markdown fences."
+    )
+    user = f"""Analysis results:
 
 {context}
 
-Respond in this exact JSON format:
+Respond with ONLY valid JSON in this exact format:
 {{
     "summary": "2-3 sentence plain English explanation of what this binary does and whether it's malicious",
-    "function_names": {{"0xADDR": "suggested_name", ...}},
-    "next_steps": ["step 1", "step 2", ...],
-    "yara_suggestion": "A YARA rule to detect similar samples (or null if not enough info)"
+    "function_names": {{}},
+    "next_steps": ["step 1", "step 2"],
+    "yara_suggestion": "A YARA rule to detect similar samples, or null if not enough info"
 }}"""
-            }
-        ],
-    )
 
     try:
-        # Extract JSON from response
-        text = response.content[0].text
-        # Find JSON in the response
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        result = json.loads(text[start:end])
+        text = _call_gemini(system, user, max_tokens=2048)
+        # Strip markdown fences if present
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+        text = text.strip()
+
+        result = json.loads(text)
         result["ai_available"] = True
         return result
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError:
         return {
             "ai_available": True,
-            "summary": response.content[0].text,
+            "summary": text,
+            "function_names": {},
+            "next_steps": [],
+            "yara_suggestion": None,
+        }
+    except Exception as e:
+        return {
+            "ai_available": True,
+            "summary": None,
+            "error": str(e),
             "function_names": {},
             "next_steps": [],
             "yara_suggestion": None,
@@ -97,30 +133,18 @@ def explain_function(code: str, context: str = "") -> dict:
     if not is_ai_available():
         return {"ai_available": False, "explanation": None}
 
-    from anthropic import Anthropic
-
-    client = Anthropic()
-
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Explain what this decompiled function does in 2-3 sentences. "
-                    f"Suggest a descriptive name.\n\n"
-                    f"Context: {context}\n\n"
-                    f"```c\n{code}\n```"
-                ),
-            }
-        ],
+    user = (
+        f"Explain what this decompiled function does in 2-3 sentences. "
+        f"Suggest a descriptive name.\n\n"
+        f"Context: {context}\n\n"
+        f"```c\n{code}\n```"
     )
 
-    return {
-        "ai_available": True,
-        "explanation": response.content[0].text,
-    }
+    try:
+        text = _call_gemini("", user, max_tokens=1024)
+        return {"ai_available": True, "explanation": text}
+    except Exception as e:
+        return {"ai_available": True, "explanation": None, "error": str(e)}
 
 
 def ask_about_binary(report: AnalysisReport, question: str) -> dict:
@@ -128,30 +152,18 @@ def ask_about_binary(report: AnalysisReport, question: str) -> dict:
     if not is_ai_available():
         return {"ai_available": False, "answer": None}
 
-    from anthropic import Anthropic
-
-    client = Anthropic()
     context = _build_context(report)
-
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2048,
-        system=(
-            "You are a malware analyst assistant. Answer questions about the binary "
-            "based on the analysis data provided. Be specific and cite evidence from the data."
-        ),
-        messages=[
-            {
-                "role": "user",
-                "content": f"Analysis data:\n{context}\n\nQuestion: {question}",
-            }
-        ],
+    system = (
+        "You are a malware analyst assistant. Answer questions about the binary "
+        "based on the analysis data provided. Be specific and cite evidence from the data."
     )
+    user = f"Analysis data:\n{context}\n\nQuestion: {question}"
 
-    return {
-        "ai_available": True,
-        "answer": response.content[0].text,
-    }
+    try:
+        text = _call_gemini(system, user, max_tokens=2048)
+        return {"ai_available": True, "answer": text}
+    except Exception as e:
+        return {"ai_available": True, "answer": None, "error": str(e)}
 
 
 def generate_yara_rule(report: AnalysisReport) -> dict:
@@ -159,31 +171,25 @@ def generate_yara_rule(report: AnalysisReport) -> dict:
     if not is_ai_available():
         return {"ai_available": False, "rule": None}
 
-    from anthropic import Anthropic
-
-    client = Anthropic()
     context = _build_context(report)
-
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2048,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Based on this analysis, write a YARA rule that would detect "
-                    f"this binary and similar variants. Use unique strings, imports, "
-                    f"or byte patterns as indicators. Output only the YARA rule.\n\n"
-                    f"Analysis:\n{context}"
-                ),
-            }
-        ],
+    user = (
+        f"Based on this analysis, write a YARA rule that would detect "
+        f"this binary and similar variants. Use unique strings, imports, "
+        f"or byte patterns as indicators. Output ONLY the YARA rule, no explanation.\n\n"
+        f"Analysis:\n{context}"
     )
 
-    return {
-        "ai_available": True,
-        "rule": response.content[0].text,
-    }
+    try:
+        text = _call_gemini("", user, max_tokens=2048)
+        # Strip markdown fences
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+        return {"ai_available": True, "rule": text.strip()}
+    except Exception as e:
+        return {"ai_available": True, "rule": None, "error": str(e)}
 
 
 def _build_context(report: AnalysisReport) -> str:
@@ -238,7 +244,6 @@ def _build_context(report: AnalysisReport) -> str:
         for f in interesting_funcs:
             parts.append(f"  {f.name} @ 0x{f.address:x} ({', '.join(f.tags)})")
             if f.code:
-                # Truncate to keep context manageable
                 code_preview = f.code[:500]
                 parts.append(f"  ```\n{code_preview}\n  ```")
         parts.append("")
