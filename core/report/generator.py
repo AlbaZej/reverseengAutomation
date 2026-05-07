@@ -93,12 +93,29 @@ def to_json(report: AnalysisReport, pretty: bool = True) -> str:
                 "success": t.success,
                 "duration_seconds": round(t.duration_seconds, 3),
                 "error": t.error or None,
+                # Include data for tools where it's lightweight and useful in the UI
+                **({"data": _safe_dict(t.data)} if t.tool_name in ("archive", "archive_aggregate") else {}),
             }
             for t in report.tool_results
         ],
     }
 
     return json.dumps(data, indent=2 if pretty else None, default=_serialize)
+
+
+def _safe_dict(data: dict) -> dict:
+    """Recursively convert a dict to JSON-serializable primitives."""
+    result = {}
+    for k, v in (data or {}).items():
+        if isinstance(v, dict):
+            result[k] = _safe_dict(v)
+        elif isinstance(v, list):
+            result[k] = [_safe_dict(x) if isinstance(x, dict) else x for x in v]
+        elif isinstance(v, (str, int, float, bool, type(None))):
+            result[k] = v
+        else:
+            result[k] = str(v)
+    return result
 
 
 def to_summary(report: AnalysisReport) -> str:

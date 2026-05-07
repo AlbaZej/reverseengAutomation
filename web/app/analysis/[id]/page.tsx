@@ -154,6 +154,9 @@ export default function AnalysisPage() {
         </div>
       )}
 
+      {/* Archive contents */}
+      <ArchiveContents report={report} />
+
       {/* IOCs */}
       {report.iocs.length > 0 && (
         <div>
@@ -302,6 +305,84 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-4 text-center">
       <div className="text-2xl font-bold">{value}</div>
       <div className="text-xs text-[var(--text-secondary)]">{label}</div>
+    </div>
+  );
+}
+
+const VERDICT_BADGE_COLORS: Record<string, string> = {
+  clean: "var(--accent-green)",
+  suspicious: "var(--accent-yellow)",
+  malicious: "var(--accent-red)",
+  unknown: "var(--text-secondary)",
+};
+
+function ArchiveContents({ report }: { report: any }) {
+  const aggregate = report.tool_results?.find(
+    (t: any) => t.tool === "archive_aggregate"
+  );
+  if (!aggregate?.data?.contained) return null;
+
+  const contained = aggregate.data.contained;
+  const archive = report.tool_results?.find((t: any) => t.tool === "archive");
+  const password = archive?.data?.password_used;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">
+          Archive Contents ({aggregate.data.analyzed}/{aggregate.data.total_files} analyzed)
+        </h2>
+        {password && (
+          <span className="text-xs px-3 py-1 bg-[var(--accent-yellow)]/20 text-[var(--accent-yellow)] rounded-full">
+            unlocked with password: {password}
+          </span>
+        )}
+      </div>
+      <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="border-b border-[var(--border)]">
+            <tr className="text-[var(--text-secondary)]">
+              <th className="text-left px-4 py-2">File</th>
+              <th className="text-left px-4 py-2">Type</th>
+              <th className="text-left px-4 py-2">Size</th>
+              <th className="text-left px-4 py-2">Verdict</th>
+              <th className="text-left px-4 py-2">Findings</th>
+            </tr>
+          </thead>
+          <tbody>
+            {contained.map((c: any, i: number) => {
+              const v = c.verdict || "unknown";
+              return (
+                <tr key={i} className="border-b border-[var(--border)]/50">
+                  <td className="px-4 py-2 font-mono text-xs">{c.path}</td>
+                  <td className="px-4 py-2">
+                    <span className="text-xs px-2 py-0.5 bg-[var(--bg-secondary)] rounded uppercase">
+                      {c.file_type}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-[var(--text-secondary)]">
+                    {(c.size / 1024).toFixed(1)} KB
+                  </td>
+                  <td className="px-4 py-2">
+                    <span
+                      className="text-xs px-2 py-0.5 rounded uppercase font-semibold"
+                      style={{
+                        color: VERDICT_BADGE_COLORS[v] || "white",
+                        backgroundColor: `${VERDICT_BADGE_COLORS[v] || "white"}20`,
+                      }}
+                    >
+                      {v}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-[var(--text-secondary)]">
+                    {c.findings || 0}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

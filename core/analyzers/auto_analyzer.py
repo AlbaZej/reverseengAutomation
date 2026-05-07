@@ -6,41 +6,42 @@ from pathlib import Path
 
 from core.ingest.reader import triage_file
 from core.models import AnalysisReport, FileType
+from core.tools.archive_tool import is_archive
 
 
 def auto_analyze(target: Path, quick: bool = False) -> AnalysisReport:
     """Auto-detect file type and run the appropriate pipeline.
 
-    Args:
-        target: Path to the file to analyze.
-        quick: If True, skip heavy tools like Ghidra.
+    Routing:
+    - Archive (ZIP/RAR/7z/TAR/etc.) → ArchiveAnalyzer (extract + analyze each file)
+    - PE/ELF/Mach-O → BinaryAnalyzer
+    - Firmware → FirmwareAnalyzer
+    - Unknown → try firmware pipeline, then binary as fallback
     """
     file_info = triage_file(target)
 
+    # Check for archives first (before file type routing)
+    if is_archive(target):
+        from core.analyzers.archive_analyzer import ArchiveAnalyzer
+        return ArchiveAnalyzer().analyze(target, quick=quick)
+
     if file_info.file_type in (FileType.PE, FileType.ELF, FileType.MACHO):
         from core.analyzers.binary_analyzer import BinaryAnalyzer
-        analyzer = BinaryAnalyzer()
-        return analyzer.analyze(target, quick=quick)
+        return BinaryAnalyzer().analyze(target, quick=quick)
 
     if file_info.file_type == FileType.PCAP:
-        # Protocol analyzer — coming soon
-        # For now, run basic analysis
         from core.analyzers.binary_analyzer import BinaryAnalyzer
-        analyzer = BinaryAnalyzer(enable_ghidra=False)
-        return analyzer.analyze(target, quick=True)
+        return BinaryAnalyzer(enable_ghidra=False).analyze(target, quick=True)
 
     if file_info.file_type == FileType.FIRMWARE:
         from core.analyzers.firmware_analyzer import FirmwareAnalyzer
-        analyzer = FirmwareAnalyzer()
-        return analyzer.analyze(target, quick=quick)
+        return FirmwareAnalyzer().analyze(target, quick=quick)
 
-    # Unknown type — try firmware pipeline first (binwalk can detect embedded content)
-    # then fall back to basic binary analysis
+    # Unknown — try firmware pipeline (binwalk can detect embedded content)
     from core.analyzers.firmware_analyzer import FirmwareAnalyzer
     try:
         analyzer = FirmwareAnalyzer()
         report = analyzer.analyze(target, quick=quick)
-        # If binwalk found signatures, this is likely firmware
         binwalk_data = next(
             (t.data for t in report.tool_results if t.tool_name == "binwalk" and t.success),
             {},
@@ -50,7 +51,5 @@ def auto_analyze(target: Path, quick: bool = False) -> AnalysisReport:
     except Exception:
         pass
 
-    # Fall back to binary analysis (strings + entropy + YARA still work on anything)
     from core.analyzers.binary_analyzer import BinaryAnalyzer
-    analyzer = BinaryAnalyzer(enable_ghidra=False)
-    return analyzer.analyze(target, quick=quick)
+    return BinaryAnalyzer(enable_ghidra=False).analyze(target, quick=quick)

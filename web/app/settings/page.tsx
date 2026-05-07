@@ -11,12 +11,14 @@ export default function SettingsPage() {
   const [aiAvailable, setAiAvailable] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState("");
+  const [origin, setOrigin] = useState("");
 
   useEffect(() => {
     if (!isLoggedIn()) {
       router.push("/login");
       return;
     }
+    setOrigin(window.location.origin);
     getMe().then(setUser);
     getAiStatus().then((d) => setAiAvailable(d.available));
   }, [router]);
@@ -102,7 +104,7 @@ export default function SettingsPage() {
 
         <div className="mt-4 p-3 bg-[var(--bg-secondary)] rounded-lg text-sm text-[var(--text-secondary)]">
           <p className="font-mono text-xs">
-            curl -H "Authorization: Bearer dshf_..." {typeof window !== "undefined" ? window.location.origin : ""}/api/upload
+            curl -H "Authorization: Bearer dshf_..." {origin}/api/upload
           </p>
         </div>
       </div>

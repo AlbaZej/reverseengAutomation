@@ -17,6 +17,7 @@ from core.tools.die_tool import DieTool
 from core.tools.entropy_tool import EntropyTool
 from core.tools.ghidra import GhidraTool
 from core.tools.radare2 import Radare2Tool
+from core.tools.shellcode_tool import ShellcodeTool
 from core.tools.strings_tool import StringsTool
 from core.tools.virustotal import VirusTotalTool
 from core.tools.yara_tool import YaraTool
@@ -33,6 +34,7 @@ class BinaryAnalyzer:
         self.r2_tool = Radare2Tool()
         self.ghidra_tool = GhidraTool()
         self.vt_tool = VirusTotalTool()
+        self.shellcode_tool = ShellcodeTool()
         self.enable_ghidra = enable_ghidra
 
     def analyze(self, target: Path, quick: bool = False) -> AnalysisReport:
@@ -146,10 +148,16 @@ class BinaryAnalyzer:
                         source_tool="virustotal",
                     ))
 
-        # Stage 9: IOC extraction from strings
+        # Stage 9: Shellcode + x86 pattern detection
+        shellcode_result = self.shellcode_tool._timed_run(target)
+        report.tool_results.append(shellcode_result)
+        if shellcode_result.success:
+            report.findings.extend(shellcode_result.data.get("findings", []))
+
+        # Stage 10: IOC extraction from strings
         report.iocs = extract_iocs_from_strings(report.strings)
 
-        # Stage 10: Compute verdict
+        # Stage 11: Compute verdict
         report.verdict, report.verdict_confidence = compute_verdict(report)
 
         return report
