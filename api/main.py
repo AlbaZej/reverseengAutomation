@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.database.engine import init_db
-from api.routers import ai_router, analysis, auth_router, export, samples, tools, upload
+from api.routers import ai_router, analysis, auth_router, export, inspect, samples, tools, upload
 
 UPLOAD_DIR = Path("uploads")
 
@@ -47,6 +47,7 @@ app.include_router(export.router, prefix="/api")
 app.include_router(tools.router, prefix="/api")
 app.include_router(samples.router, prefix="/api")
 app.include_router(ai_router.router, prefix="/api")
+app.include_router(inspect.router, prefix="/api")
 
 
 @app.get("/api/health")

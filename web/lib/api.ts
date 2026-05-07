@@ -204,6 +204,34 @@ export async function aiGenerateYara(jobId: string) {
   return res.json();
 }
 
+// --- Inspect (hex + disasm) ---
+
+export async function getHex(uploadId: string, offset: number, length: number = 256) {
+  const res = await fetch(
+    `/api/samples/${uploadId}/hex?offset=${offset}&length=${length}`,
+    { headers: getHeaders() }
+  );
+  if (!res.ok) throw new Error("Failed to load hex");
+  return res.json();
+}
+
+export async function getDisasm(
+  uploadId: string,
+  offset: number,
+  length: number = 64,
+  useAddress: boolean = false
+) {
+  const res = await fetch(
+    `/api/samples/${uploadId}/disasm?offset=${offset}&length=${length}&use_address=${useAddress}`,
+    { headers: getHeaders() }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || "Disassembly failed");
+  }
+  return res.json();
+}
+
 // --- Tools ---
 
 export async function getTools() {

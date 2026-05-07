@@ -87,6 +87,28 @@ def to_json(report: AnalysisReport, pretty: bool = True) -> str:
                 for s in report.strings if s.is_interesting
             ],
         },
+        "functions": [
+            {
+                "name": f.name,
+                "address": f.address,
+                "size": f.size,
+                "code": f.code,
+                "calls": f.calls,
+                "called_by": f.called_by,
+                "is_interesting": f.is_interesting,
+                "tags": f.tags,
+            }
+            for f in report.functions
+        ],
+        "imports": [
+            {
+                "library": i.library,
+                "name": i.name,
+                "is_suspicious": i.is_suspicious,
+                "category": i.category,
+            }
+            for i in report.imports
+        ],
         "tool_results": [
             {
                 "tool": t.tool_name,

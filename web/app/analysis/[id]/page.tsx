@@ -6,6 +6,7 @@ import { getAnalysis, getExportUrl, addAnnotation, isLoggedIn } from "@/lib/api"
 import { EntropyChart } from "@/components/EntropyChart";
 import { FindingsTable } from "@/components/FindingsTable";
 import { AiPanel } from "@/components/AiPanel";
+import { InspectPanel } from "@/components/InspectPanel";
 import {
   Download,
   Loader2,
@@ -205,6 +206,14 @@ export default function AnalysisPage() {
           <Download size={16} /> Text Report
         </a>
       </div>
+
+      {/* Cutter-style inspect panel */}
+      {data.upload_id && (
+        <InspectPanel
+          uploadId={data.upload_id}
+          functions={report.functions || []}
+        />
+      )}
 
       {/* AI Panel */}
       <AiPanel jobId={jobId} />

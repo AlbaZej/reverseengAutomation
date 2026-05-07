@@ -82,6 +82,7 @@ def get_analysis(job_id: str, db: Session = Depends(get_db)):
 
     result = {
         "job_id": job.id,
+        "upload_id": job.upload_id,
         "status": job.status,
         "verdict": job.verdict,
         "verdict_confidence": job.verdict_confidence,
