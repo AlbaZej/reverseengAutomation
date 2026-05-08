@@ -13,12 +13,17 @@ from core.tools.archive_tool import ArchiveTool
 class ArchiveAnalyzer:
     """Extract archives, run binary/firmware pipeline on each contained file."""
 
-    def __init__(self, max_files: int = 25, max_file_size_mb: int = 100):
+    def __init__(self, max_files: int = 25, max_file_size_mb: int = 100, max_depth: int = 3):
+        """max_depth: how many nested archives to recurse into.
+        MalwareBazaar uses depth-2 (encrypted outer ZIP → inner ZIP → sample).
+        Default 3 handles that with a safety margin against zip bombs.
+        """
         self.archive_tool = ArchiveTool()
         self.max_files = max_files
         self.max_file_size = max_file_size_mb * 1024 * 1024
+        self.max_depth = max_depth
 
-    def analyze(self, target: Path, quick: bool = True) -> AnalysisReport:
+    def analyze(self, target: Path, quick: bool = True, depth: int = 0) -> AnalysisReport:
         file_info = triage_file(target)
         report = AnalysisReport(file_info=file_info)
 
@@ -68,9 +73,12 @@ class ArchiveAnalyzer:
 
             contained_path = Path(file_entry["abs_path"])
             try:
-                # Run the auto-analyzer on each file (will route to right pipeline)
-                # quick=True to skip Ghidra for archive contents (would be too slow)
-                sub_report = _analyze_contained(contained_path, quick=True)
+                sub_report = _analyze_contained(
+                    contained_path,
+                    quick=True,
+                    depth=depth + 1,
+                    max_depth=self.max_depth,
+                )
                 contained_reports.append({
                     "path": file_entry["path"],
                     "size": file_entry["size"],
@@ -119,6 +127,33 @@ class ArchiveAnalyzer:
                     context=f"{cr['path']} → {ioc.context}",
                 ))
 
+            # Roll up YARA matches
+            for ym in sub.yara_matches:
+                report.yara_matches.append(ym)
+
+            # Roll up functions and imports — prefix the function name with the
+            # source file so the Inspect panel can show "[GameBox.exe] func_name".
+            # This fixes the "0 Functions" UI limitation.
+            for func in sub.functions:
+                from core.models import DecompiledFunction
+                report.functions.append(DecompiledFunction(
+                    name=f"[{cr['path']}] {func.name}",
+                    address=func.address,
+                    size=func.size,
+                    code=func.code,
+                    calls=func.calls,
+                    called_by=func.called_by,
+                    is_interesting=func.is_interesting,
+                    tags=func.tags,
+                ))
+            for imp in sub.imports:
+                report.imports.append(imp)
+
+            # Roll up interesting strings (so the count stat in the UI is accurate)
+            for s in sub.strings:
+                if s.is_interesting:
+                    report.strings.append(s)
+
         # Store contained file metadata
         report.tool_results.append(type(result)(
             tool_name="archive_aggregate",
@@ -152,8 +187,12 @@ class ArchiveAnalyzer:
         return report
 
 
-def _analyze_contained(path: Path, quick: bool = True) -> AnalysisReport:
-    """Analyze a single contained file. Lazy import to avoid circular dep."""
+def _analyze_contained(path: Path, quick: bool = True, depth: int = 1, max_depth: int = 3) -> AnalysisReport:
+    """Analyze a single contained file. Recurses into nested archives up to max_depth.
+
+    MalwareBazaar samples are nested 2 deep (encrypted ZIP → unencrypted ZIP → sample),
+    so we need to recurse at least once.
+    """
     file_info = triage_file(path)
 
     from core.models import FileType
@@ -163,11 +202,24 @@ def _analyze_contained(path: Path, quick: bool = True) -> AnalysisReport:
 
     from core.tools.archive_tool import is_archive
     if is_archive(path):
-        # Don't recurse into nested archives — return basic triage only
-        report = AnalysisReport(file_info=file_info)
-        report.verdict = "unknown"
-        return report
+        if depth >= max_depth:
+            # Hit the recursion limit — return basic triage only (zip-bomb protection)
+            report = AnalysisReport(file_info=file_info)
+            report.verdict = "unknown"
+            from core.models import Finding, SignalType
+            report.findings.append(Finding(
+                title="Nested archive depth limit reached",
+                description=f"Refusing to recurse beyond depth {max_depth} (zip-bomb protection)",
+                severity=SignalType.LOW,
+                source_tool="archive",
+            ))
+            return report
+        # Recurse into nested archive — this handles MalwareBazaar's nested format
+        from core.analyzers.archive_analyzer import ArchiveAnalyzer
+        return ArchiveAnalyzer(max_depth=max_depth).analyze(path, quick=quick, depth=depth)
 
-    # Unknown / other → run firmware pipeline (good for any blob)
-    from core.analyzers.firmware_analyzer import FirmwareAnalyzer
-    return FirmwareAnalyzer().analyze(path, quick=quick)
+    # Unknown / other (could be a binary without standard magic bytes — like the actual
+    # malware sample inside a MalwareBazaar nested ZIP, which is named just by its hash
+    # with no extension). Try the binary analyzer; it handles unknown types gracefully.
+    from core.analyzers.binary_analyzer import BinaryAnalyzer
+    return BinaryAnalyzer(enable_ghidra=False).analyze(path, quick=quick)

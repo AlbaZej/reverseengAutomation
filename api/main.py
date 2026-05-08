@@ -19,7 +19,36 @@ async def lifespan(app: FastAPI):
     """Startup/shutdown logic."""
     UPLOAD_DIR.mkdir(exist_ok=True)
     init_db()
+    _recover_orphaned_jobs()
     yield
+
+
+def _recover_orphaned_jobs():
+    """Mark any 'running' or 'pending' jobs as failed at startup.
+
+    Jobs in those states were running in a BackgroundTask of a previous
+    API process. When the API restarts, those tasks are gone but the DB
+    rows are stuck — so the UI would show them as 'running' forever and
+    AI calls on them would fail with 400. Mark them failed instead.
+    """
+    from datetime import datetime, timezone
+    from api.database.engine import SessionLocal
+    from api.database.orm_models import AnalysisJob
+
+    db = SessionLocal()
+    try:
+        orphaned = db.query(AnalysisJob).filter(
+            AnalysisJob.status.in_(("running", "pending"))
+        ).all()
+        for job in orphaned:
+            job.status = "failed"
+            job.error = "Job orphaned by API restart"
+            job.completed_at = datetime.now(timezone.utc)
+        if orphaned:
+            print(f"Recovered {len(orphaned)} orphaned analysis job(s)")
+        db.commit()
+    finally:
+        db.close()
 
 
 app = FastAPI(

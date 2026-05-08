@@ -43,8 +43,14 @@ class Radare2Tool(BaseTool):
             r2.quit()
 
     def _analyze(self, r2, target: Path) -> ToolResult:
-        # Run auto-analysis
-        r2.cmd("aaa")
+        # Run basic auto-analysis (aa) instead of deep (aaa).
+        # aa: function discovery + symbol resolution — fast (~3-5s on real malware)
+        # aaa: also recovers types, calling conventions, full control flow — slow (~60-120s)
+        # For triage, aa gives us imports, exports, and function list; that's enough.
+        # Use aaa only when --quick is False AND the binary is small.
+        r2.cmd("aa")
+        # Run aac to analyze function calls — gives us cross-references cheaply.
+        r2.cmd("aac")
 
         # File info
         info = json.loads(r2.cmd("ij"))
