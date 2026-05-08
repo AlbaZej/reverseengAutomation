@@ -191,7 +191,10 @@ export async function aiAsk(jobId: string, question: string) {
     headers: getHeaders(),
     body: JSON.stringify({ job_id: jobId, question }),
   });
-  if (!res.ok) throw new Error("AI query failed");
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `HTTP ${res.status}: ${res.statusText}`);
+  }
   return res.json();
 }
 

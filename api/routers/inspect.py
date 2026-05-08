@@ -94,10 +94,26 @@ def get_disasm(
 
     r2 = r2pipe.open(str(file_path), flags=["-2"])
     try:
-        # Seek to offset and disassemble N bytes
-        seek_target = hex(offset) if use_address else f"$$+{offset}" if offset > 0 else "$$"
-        r2.cmd(f"s {hex(offset) if use_address else offset}")
-        disasm_text = r2.cmd(f"pd {length // 4}")  # ~4 bytes per instruction average
+        # Run basic analysis so r2 knows about functions at the requested address
+        r2.cmd("aa")
+        r2.cmd("aac")
+
+        # Seek to the target
+        seek_addr = hex(offset) if use_address else offset
+        r2.cmd(f"s {seek_addr}")
+
+        # Try to disassemble as a recognized function first (pdf = print disasm function).
+        # This bounds the output to the actual function body, avoiding the trailing
+        # garbage / padding ('ff ff ff' invalid bytes) that you get from a fixed-byte
+        # disassembly walking past the end of the function into data.
+        disasm_text = r2.cmd("pdf").strip()
+
+        # If pdf returned nothing useful (no function defined at that address),
+        # fall back to disassembling N instructions so users can still see something.
+        if not disasm_text or disasm_text.startswith("ERROR") or "Cannot find function" in disasm_text:
+            # Estimate ~4 bytes/instruction on x86, cap at 64 instructions
+            n_instructions = min(64, max(8, length // 4))
+            disasm_text = r2.cmd(f"pd {n_instructions}")
 
         # Try to detect function name at this address
         func_info = r2.cmd("afi.").strip()

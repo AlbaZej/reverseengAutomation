@@ -49,11 +49,19 @@ export function AiPanel({ jobId }: { jobId: string }) {
   const askWith = async (q: string) => {
     if (!q.trim()) return;
     setLoading("ask");
+    setAnswer("");
     try {
       const result = await aiAsk(jobId, q);
-      setAnswer(result.answer || "No answer available");
-    } catch {
-      setAnswer("Failed to get answer");
+      if (result.answer) {
+        setAnswer(result.answer);
+      } else if (result.error) {
+        setAnswer(`Error: ${result.error}`);
+      } else {
+        setAnswer("No answer returned");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      setAnswer(`Request failed: ${msg}`);
     } finally {
       setLoading("");
     }
