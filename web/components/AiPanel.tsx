@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { aiExplain, aiAsk, aiGenerateYara, getAiStatus } from "@/lib/api";
 import { Cpu, MessageSquare, FileCode, Loader2 } from "lucide-react";
+
+const SUGGESTED_QUESTIONS = [
+  "Is this packed?",
+  "Does it use process injection?",
+  "What anti-debug techniques are used?",
+  "Does it connect to a C2?",
+  "What persistence mechanism does it use?",
+  "What is the verdict?",
+];
 
 export function AiPanel({ jobId }: { jobId: string }) {
   const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
@@ -12,49 +21,15 @@ export function AiPanel({ jobId }: { jobId: string }) {
   const [yaraRule, setYaraRule] = useState("");
   const [loading, setLoading] = useState("");
 
-  // Check AI status on first render
-  useState(() => {
+  useEffect(() => {
     getAiStatus().then((d) => setAiAvailable(d.available));
-  });
-
-  if (aiAvailable === null) return null;
-
-  if (!aiAvailable) {
-    return (
-      <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-6">
-        <h2 className="text-lg font-semibold mb-2 flex items-center gap-2">
-          <Cpu size={20} className="text-[var(--text-secondary)]" /> AI Analysis
-        </h2>
-        <p className="text-sm text-[var(--text-secondary)]">
-          Ollama is not running. AI features run locally — your data never leaves your machine.
-        </p>
-        <ol className="text-xs text-[var(--text-secondary)] mt-3 space-y-1 list-decimal list-inside">
-          <li>
-            Install Ollama:{" "}
-            <a
-              href="https://ollama.com/download"
-              target="_blank"
-              rel="noopener"
-              className="text-[var(--accent-blue)] hover:underline"
-            >
-              ollama.com/download
-            </a>
-          </li>
-          <li>
-            Pull a model: <code className="text-[var(--accent-blue)]">ollama pull llama3.1:8b</code>
-          </li>
-          <li>Ollama runs automatically — refresh this page</li>
-        </ol>
-      </div>
-    );
-  }
+  }, []);
 
   const handleExplain = async () => {
     setLoading("explain");
     try {
       const result = await aiExplain(jobId);
-      // Surface the error field if the backend returned one
-      if (result.error) {
+      if (result.error && !result.summary) {
         setExplanation({
           summary: `AI request failed: ${result.error}`,
         });
@@ -63,17 +38,19 @@ export function AiPanel({ jobId }: { jobId: string }) {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
-      setExplanation({ summary: `Request failed: ${msg}. Open the browser DevTools → Network tab to see the response.` });
+      setExplanation({
+        summary: `Request failed: ${msg}.`,
+      });
     } finally {
       setLoading("");
     }
   };
 
-  const handleAsk = async () => {
-    if (!question.trim()) return;
+  const askWith = async (q: string) => {
+    if (!q.trim()) return;
     setLoading("ask");
     try {
-      const result = await aiAsk(jobId, question);
+      const result = await aiAsk(jobId, q);
       setAnswer(result.answer || "No answer available");
     } catch {
       setAnswer("Failed to get answer");
@@ -81,6 +58,8 @@ export function AiPanel({ jobId }: { jobId: string }) {
       setLoading("");
     }
   };
+
+  const handleAsk = () => askWith(question);
 
   const handleYara = async () => {
     setLoading("yara");
@@ -94,11 +73,46 @@ export function AiPanel({ jobId }: { jobId: string }) {
     }
   };
 
+  if (aiAvailable === null) return null;
+
+  const isFallback = explanation?.source === "fallback";
+
   return (
     <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg p-6 space-y-6">
-      <h2 className="text-lg font-semibold flex items-center gap-2">
-        <Cpu size={20} className="text-[var(--accent-blue)]" /> AI Analysis
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Cpu size={20} className="text-[var(--accent-blue)]" /> AI Analysis
+        </h2>
+        <div className="flex items-center gap-2 text-xs">
+          <div
+            className="w-2 h-2 rounded-full"
+            style={{
+              backgroundColor: aiAvailable
+                ? "var(--accent-green)"
+                : "var(--accent-yellow)",
+            }}
+          />
+          <span className="text-[var(--text-secondary)]">
+            {aiAvailable ? "Ollama (local LLM)" : "Fallback mode (no Ollama)"}
+          </span>
+        </div>
+      </div>
+
+      {!aiAvailable && (
+        <div className="text-xs text-[var(--text-secondary)] p-2 bg-[var(--bg-secondary)] rounded">
+          Ollama isn't running. Responses are generated from the deterministic findings.
+          To get richer summaries: install Ollama from{" "}
+          <a
+            href="https://ollama.com/download"
+            target="_blank"
+            rel="noopener"
+            className="text-[var(--accent-blue)] hover:underline"
+          >
+            ollama.com/download
+          </a>{" "}
+          and run <code className="text-[var(--accent-blue)]">ollama pull llama3.1:8b</code>.
+        </div>
+      )}
 
       {/* Explain button */}
       <div>
@@ -115,28 +129,51 @@ export function AiPanel({ jobId }: { jobId: string }) {
           Explain this binary
         </button>
         {explanation?.summary && (
-          <div className="mt-3 p-4 bg-[var(--bg-secondary)] rounded-lg text-sm whitespace-pre-wrap">
-            {explanation.summary}
-          </div>
-        )}
-        {explanation?.next_steps?.length > 0 && (
-          <div className="mt-2 text-sm">
-            <span className="text-[var(--text-secondary)]">Next steps:</span>
-            <ul className="list-disc list-inside mt-1 text-[var(--text-secondary)]">
-              {explanation.next_steps.map((s: string, i: number) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </div>
+          <>
+            <div className="mt-3 p-4 bg-[var(--bg-secondary)] rounded-lg text-sm whitespace-pre-wrap">
+              {explanation.summary}
+            </div>
+            {isFallback && (
+              <div className="text-xs text-[var(--text-secondary)] mt-1">
+                ↑ Generated from deterministic findings (no LLM)
+              </div>
+            )}
+            {explanation.next_steps?.length > 0 && (
+              <div className="mt-2 text-sm">
+                <span className="text-[var(--text-secondary)]">Next steps:</span>
+                <ul className="list-disc list-inside mt-1 text-[var(--text-secondary)]">
+                  {explanation.next_steps.map((s: string, i: number) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {/* Ask a question */}
+      {/* Suggested questions chips */}
       <div>
+        <div className="text-xs text-[var(--text-secondary)] mb-2">Suggested questions:</div>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {SUGGESTED_QUESTIONS.map((sq) => (
+            <button
+              key={sq}
+              onClick={() => {
+                setQuestion(sq);
+                askWith(sq);
+              }}
+              disabled={loading === "ask"}
+              className="text-xs px-3 py-1.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-full hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)] transition disabled:opacity-50"
+            >
+              {sq}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder="Ask about this binary..."
+            placeholder="Or ask your own question..."
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAsk()}

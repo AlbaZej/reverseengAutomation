@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.ingest.reader import triage_file
-from core.knowledge.heuristics import compute_verdict
+from core.knowledge.heuristics import compute_verdict, generate_findings_from_entropy
 from core.models import AnalysisReport, Finding, SignalType
 from core.tools.archive_tool import ArchiveTool
+from core.tools.entropy_tool import EntropyTool
+from core.tools.strings_tool import StringsTool
 
 
 class ArchiveAnalyzer:
@@ -19,6 +21,8 @@ class ArchiveAnalyzer:
         Default 3 handles that with a safety margin against zip bombs.
         """
         self.archive_tool = ArchiveTool()
+        self.entropy_tool = EntropyTool()
+        self.strings_tool = StringsTool()
         self.max_files = max_files
         self.max_file_size = max_file_size_mb * 1024 * 1024
         self.max_depth = max_depth
@@ -26,6 +30,18 @@ class ArchiveAnalyzer:
     def analyze(self, target: Path, quick: bool = True, depth: int = 0) -> AnalysisReport:
         file_info = triage_file(target)
         report = AnalysisReport(file_info=file_info)
+
+        # Run entropy + strings on the outer archive itself (so the UI's entropy map
+        # has something to show even when the report is dominated by contained-file data).
+        entropy_result = self.entropy_tool._timed_run(target)
+        report.tool_results.append(entropy_result)
+        if entropy_result.success:
+            report.entropy_regions = entropy_result.data.get("regions", [])
+
+        strings_result = self.strings_tool._timed_run(target)
+        report.tool_results.append(strings_result)
+        if strings_result.success:
+            report.strings = list(strings_result.data.get("strings", []))
 
         # Extract archive
         result = self.archive_tool._timed_run(target)
