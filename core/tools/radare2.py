@@ -11,6 +11,35 @@ from core.tools.base import BaseTool
 from core.knowledge.signatures import API_TO_CATEGORY
 
 
+# Common r2 prefixes for imported/external symbols
+_R2_PREFIXES = ("sym.imp.", "imp.", "sym.", "fcn.")
+
+
+def _strip_api_prefix(name: str) -> str:
+    """Reduce an r2 symbol name like 'sym.imp.kernel32.dll_VirtualAllocEx'
+    to a bare API name 'VirtualAllocEx' that matches our API_TO_CATEGORY table.
+
+    Handles:
+      sym.imp.VirtualAllocEx               -> VirtualAllocEx
+      sym.imp.kernel32.dll_VirtualAllocEx  -> VirtualAllocEx
+      kernel32.dll_VirtualAllocEx          -> VirtualAllocEx
+      VirtualAllocEx                       -> VirtualAllocEx
+    """
+    if not name:
+        return name
+    # Strip r2 prefixes
+    for prefix in _R2_PREFIXES:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    # If there's a "DLL_API" pattern, take the part after the last underscore
+    # (but not numeric suffixes like _0, _1)
+    if "_" in name:
+        head, _, tail = name.rpartition("_")
+        if tail and not tail.isdigit():
+            name = tail
+    return name
+
+
 class Radare2Tool(BaseTool):
     name = "radare2"
     description = "Fast binary analysis via radare2 — disassembly, imports, strings, xrefs"
@@ -61,8 +90,7 @@ class Radare2Tool(BaseTool):
         imports = []
         for imp in raw_imports:
             name = imp.get("name", "")
-            # Strip library prefix if present (e.g., "kernel32.dll_CreateFileA")
-            short_name = name.split("_", 1)[-1] if "_" in name else name
+            short_name = _strip_api_prefix(name)
             category = API_TO_CATEGORY.get(short_name, "")
             imports.append(ImportedFunction(
                 library=imp.get("libname", ""),
@@ -84,31 +112,44 @@ class Radare2Tool(BaseTool):
 
         # Functions
         raw_functions = json.loads(r2.cmd("aflj") or "[]")
+
+        # Build a map: function_addr -> (set of tags, set of called API names)
+        # by querying axtj on each suspicious import. This is much more reliable
+        # than axfj per function (which doesn't include symbol names).
+        suspicious_callers: dict[int, dict] = {}
+        for imp in raw_imports:
+            imp_name = imp.get("name", "")
+            short = _strip_api_prefix(imp_name)
+            if short not in API_TO_CATEGORY:
+                continue
+            category = API_TO_CATEGORY[short]
+            plt = imp.get("plt") or 0
+            if not plt:
+                continue
+            refs = json.loads(r2.cmd(f"axtj {plt}") or "[]")
+            for ref in refs:
+                fcn_addr = ref.get("fcn_addr")
+                if fcn_addr is None:
+                    continue
+                bucket = suspicious_callers.setdefault(fcn_addr, {"tags": set(), "calls": []})
+                bucket["tags"].add(category)
+                bucket["calls"].append(short)
+
         functions = []
         for func in raw_functions:
             name = func.get("name", "")
-            addr = func.get("offset", 0)
+            # r2 6.x uses "addr"; older versions used "offset". Support both.
+            addr = func.get("addr") if func.get("addr") is not None else func.get("offset", 0)
             size = func.get("size", 0)
 
-            # Get disassembly for interesting functions (limit to keep it fast)
-            disasm = ""
-            is_interesting = False
-            tags = []
-
-            # Check if function calls suspicious APIs
-            xrefs_out = json.loads(r2.cmd(f"axfj @{addr}") or "[]")
-            calls = []
-            for xref in xrefs_out:
-                ref_name = xref.get("name", "")
-                if ref_name:
-                    calls.append(ref_name)
-                    short = ref_name.split("_", 1)[-1] if "_" in ref_name else ref_name
-                    if short in API_TO_CATEGORY:
-                        is_interesting = True
-                        tags.append(API_TO_CATEGORY[short])
+            interesting_data = suspicious_callers.get(addr)
+            is_interesting = interesting_data is not None
+            tags = sorted(interesting_data["tags"]) if interesting_data else []
+            calls = interesting_data["calls"] if interesting_data else []
 
             # Decompile interesting functions (using r2 pseudo-decompiler)
-            if is_interesting and len(functions) < 30:
+            disasm = ""
+            if is_interesting and sum(1 for f in functions if f.is_interesting) < 30:
                 disasm = r2.cmd(f"pdc @{addr}") or ""
 
             functions.append(DecompiledFunction(
@@ -118,7 +159,7 @@ class Radare2Tool(BaseTool):
                 code=disasm,
                 calls=calls,
                 is_interesting=is_interesting,
-                tags=list(set(tags)),
+                tags=tags,
             ))
 
         # Sections
