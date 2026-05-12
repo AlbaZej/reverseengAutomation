@@ -20,7 +20,30 @@ async def lifespan(app: FastAPI):
     UPLOAD_DIR.mkdir(exist_ok=True)
     init_db()
     _recover_orphaned_jobs()
+    _warm_ollama()
     yield
+
+
+def _warm_ollama():
+    """Send a tiny prompt to Ollama in a background thread so the model is
+    loaded into RAM before the user's first click. The first-call cold load
+    on Llama 3.1 8B is ~30s — by warming it at startup, the user always
+    gets fast responses.
+    """
+    import threading
+
+    def _warm():
+        try:
+            from core.ai.interpreter import is_ai_available, _call_ollama
+            if not is_ai_available():
+                return
+            print("Warming Ollama (loading model into RAM)...")
+            _call_ollama("", "Hi", max_tokens=5, timeout=120)
+            print("Ollama warmed up — AI calls will now be fast")
+        except Exception as e:
+            print(f"Ollama warmup failed (will fall back to deterministic): {e}")
+
+    threading.Thread(target=_warm, daemon=True).start()
 
 
 def _recover_orphaned_jobs():

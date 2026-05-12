@@ -48,8 +48,19 @@ def get_available_models() -> list[str]:
         return []
 
 
-def _call_ollama(system_prompt: str, user_prompt: str, max_tokens: int = 2048) -> str:
-    """Call the local Ollama API and return the text response."""
+def _call_ollama(
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int = 2048,
+    timeout: int = 25,
+) -> str:
+    """Call the local Ollama API and return the text response.
+
+    Default timeout is 25s — short enough that the frontend never times out
+    waiting for us, long enough that warm Llama calls succeed comfortably.
+    First (cold-start) calls on Llama 3.1 8B can exceed 60s; those will
+    timeout and the caller falls back to the deterministic explainer.
+    """
     url = f"{OLLAMA_HOST}/api/chat"
 
     messages = []
@@ -75,15 +86,15 @@ def _call_ollama(system_prompt: str, user_prompt: str, max_tokens: int = 2048) -
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         error_body = e.read().decode()
         raise RuntimeError(f"Ollama API error {e.code}: {error_body}")
-    except urllib.error.URLError as e:
+    except (urllib.error.URLError, TimeoutError) as e:
         raise RuntimeError(
-            f"Cannot reach Ollama at {OLLAMA_HOST}. "
-            f"Is Ollama running? Install at https://ollama.com/download. Error: {e}"
+            f"Ollama timed out after {timeout}s — model may be cold-loading. "
+            f"Falling back to deterministic explanation."
         )
 
     return data.get("message", {}).get("content", "")
@@ -127,29 +138,31 @@ Respond with ONLY valid JSON:
 }}"""
 
     try:
-        text = _call_ollama(system, user, max_tokens=2048)
+        # 60s timeout for explain (it's a heavier prompt). Frontend allows ~90s.
+        # 800 tokens is enough for a tight summary + 3 next steps + a YARA rule.
+        text = _call_ollama(system, user, max_tokens=800, timeout=60)
         text = _strip_markdown_fences(text)
 
         result = json.loads(text)
         result["ai_available"] = True
+        result["source"] = "ollama"
         return result
     except json.JSONDecodeError:
         return {
             "ai_available": True,
+            "source": "ollama",
             "summary": text,
             "function_names": {},
             "next_steps": [],
             "yara_suggestion": None,
         }
     except Exception as e:
-        return {
-            "ai_available": True,
-            "summary": None,
-            "error": str(e),
-            "function_names": {},
-            "next_steps": [],
-            "yara_suggestion": None,
-        }
+        # Ollama failed (timeout, cold-load, network) — fall back to deterministic
+        # so the UI ALWAYS gets a useful summary instead of an error.
+        fb = _fallback_explanation(report)
+        fb["source"] = "fallback_after_ollama_failure"
+        fb["llm_error"] = str(e)
+        return fb
 
 
 def _fallback_explanation(report: AnalysisReport) -> dict:
@@ -276,10 +289,18 @@ def explain_function(code: str, context: str = "") -> dict:
     )
 
     try:
-        text = _call_ollama("", user, max_tokens=1024)
-        return {"ai_available": True, "explanation": text}
+        text = _call_ollama("", user, max_tokens=1024, timeout=20)
+        return {"ai_available": True, "source": "ollama", "explanation": text}
     except Exception as e:
-        return {"ai_available": True, "explanation": None, "error": str(e)}
+        return {
+            "ai_available": True,
+            "source": "fallback_after_ollama_failure",
+            "explanation": (
+                f"Ollama call failed ({e}). The function appears to be at the offset shown. "
+                f"For an LLM-driven explanation, ensure Ollama is running and the model is loaded "
+                f"(may take 30+ seconds on first call)."
+            ),
+        }
 
 
 def ask_about_binary(report: AnalysisReport, question: str) -> dict:
@@ -295,10 +316,11 @@ def ask_about_binary(report: AnalysisReport, question: str) -> dict:
     user = f"Analysis data:\n{context}\n\nQuestion: {question}"
 
     try:
-        text = _call_ollama(system, user, max_tokens=2048)
-        return {"ai_available": True, "answer": text}
-    except Exception as e:
-        return {"ai_available": True, "answer": None, "error": str(e)}
+        text = _call_ollama(system, user, max_tokens=2048, timeout=25)
+        return {"ai_available": True, "source": "ollama", "answer": text}
+    except Exception:
+        # Fall back to rule-based answer
+        return _fallback_answer(report, question)
 
 
 def _fallback_answer(report: AnalysisReport, question: str) -> dict:
@@ -432,10 +454,16 @@ def generate_yara_rule(report: AnalysisReport) -> dict:
     )
 
     try:
-        text = _call_ollama("", user, max_tokens=2048)
-        return {"ai_available": True, "rule": _strip_markdown_fences(text)}
-    except Exception as e:
-        return {"ai_available": True, "rule": None, "error": str(e)}
+        text = _call_ollama("", user, max_tokens=2048, timeout=25)
+        return {"ai_available": True, "source": "ollama", "rule": _strip_markdown_fences(text)}
+    except Exception:
+        # Fall back to deterministic YARA rule generator
+        fb = _fallback_explanation(report)
+        return {
+            "ai_available": True,
+            "source": "fallback_after_ollama_failure",
+            "rule": fb.get("yara_suggestion") or "// Could not generate a rule (LLM timed out and no usable patterns found)",
+        }
 
 
 def _strip_markdown_fences(text: str) -> str:
